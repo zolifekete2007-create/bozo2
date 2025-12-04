@@ -1,95 +1,91 @@
 #!/usr/bin/env bash
 
-# ====== Színek (egyszerűbb) ======
+# ====== Színek ======
 RED='\033[1;31m'
 GREEN='\033[1;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[1;34m'
 NC='\033[0m'
-
-CHECK="${GREEN}[OK]${NC}"
-ERR="${RED}[ERR]${NC}"
-INFO="${BLUE}[INFO]${NC}"
+CHECK="${GREEN}✓${NC}"
+CROSS="${RED}✗${NC}"
+WARN="${YELLOW}!${NC}"
 
 set -e
 export DEBIAN_FRONTEND=noninteractive
 
-echo -e "${BLUE}"
-echo '╔══════════════════════════════════════════╗'
-echo '║     Egyszerű Vincseszter Telepítő        ║'
-echo '╚══════════════════════════════════════════╝'
-echo -e "${NC}"
-
 # --- Root ellenőrzés ---
 if [[ $EUID -ne 0 ]]; then
-  echo -e "${ERR} Rootként futtasd!"
+  echo -e "${CROSS} Ezt a scriptet rootként kell futtatni!${NC}"
+  echo "Használd így: sudo bash install.sh"
   exit 1
 fi
 
-# IP cím
+echo -e "${MAGENTA}"
+echo '╔══════════════════════════════════════════════════════════════╗'
+echo '║  Node-RED + Apache2 + MariaDB + phpMyAdmin + MQTT + mc      ║'
+echo '╚══════════════════════════════════════════════════════════════╝'
+echo -e "${NC}"
+
+# --- IP cím detektálása ---
 IP_ADDR=$(hostname -I 2>/dev/null | awk '{print $1}')
 [ -z "$IP_ADDR" ] && IP_ADDR="szerver-ip"
 
 #########################################
-# MENÜ
+# MENÜ – MIT TELEPÍTSEN A SCRIPT?
 #########################################
 
-echo -e "${YELLOW}Mit szeretnél telepíteni?${NC}"
-echo -e "  1 - Node-RED"
-echo -e "  2 - Apache2 + MariaDB + PHP + phpMyAdmin"
-echo -e "  3 - MQTT (Mosquitto)"
-echo -e "  4 - mc (Midnight Commander)"
-echo -e "  5 - MINDENT telepít"
-echo
-read -rp "Választás (pl. 1 vagy 1 2 3): " CHOICES
+INSTALL_NODE_RED=0
+INSTALL_LAMP=0          # Apache2 + MariaDB + PHP + phpMyAdmin
+INSTALL_MQTT=0          # Mosquitto
+INSTALL_MC=0
 
-# Flags
-NODE_RED=0
-LAMP=0
-MQTT=0
-MC=0
+echo -e "${CYAN}Mit szeretnél telepíteni?${NC}"
+echo -e "  ${YELLOW}1${NC} - Node-RED (ha van node + npm)"
+echo -e "  ${YELLOW}2${NC} - Apache2 + MariaDB + PHP + phpMyAdmin"
+echo -e "  ${YELLOW}3${NC} - MQTT szerver (Mosquitto)"
+echo -e "  ${YELLOW}4${NC} - mc (Midnight Commander)"
+echo -e "  ${YELLOW}5${NC} - Mindent telepít"
+echo
+read -rp "Választás (pl. 1 3 4): " CHOICES </dev/tty || CHOICES=""
 
 if echo "$CHOICES" | grep -qw "5"; then
-  NODE_RED=1
-  LAMP=1
-  MQTT=1
-  MC=1
+  INSTALL_NODE_RED=1
+  INSTALL_LAMP=1
+  INSTALL_MQTT=1
+  INSTALL_MC=1
 fi
 
 for c in $CHOICES; do
   case "$c" in
-    1) NODE_RED=1 ;;
-    2) LAMP=1 ;;
-    3) MQTT=1 ;;
-    4) MC=1 ;;
+    1) INSTALL_NODE_RED=1 ;;
+    2) INSTALL_LAMP=1 ;;
+    3) INSTALL_MQTT=1 ;;
+    4) INSTALL_MC=1 ;;
     5) ;; # már kezeltük
-    *) echo -e "${YELLOW}[!] Ismeretlen opció: $c${NC}" ;;
+    *) echo -e "${WARN} Ismeretlen opció: $c (kihagyva)" ;;
   esac
 done
 
-if [[ $NODE_RED -eq 0 && $LAMP -eq 0 && $MQTT -eq 0 && $MC -eq 0 ]]; then
-  echo -e "${ERR} Nem választottál semmit."
+if [[ $INSTALL_NODE_RED -eq 0 && $INSTALL_LAMP -eq 0 && $INSTALL_MQTT -eq 0 && $INSTALL_MC -eq 0 ]]; then
+  echo -e "${CROSS} Nem választottál semmit, kilépek."
   exit 0
 fi
 
 #########################################
-# APT update
+# 1️⃣ Rendszer frissítés + alap csomagok
 #########################################
-echo -e "${INFO} Rendszer frissítése..."
+echo -e "${BLUE}1. Rendszer frissítése és alap eszközök telepítése${NC}"
 apt-get update -y && apt-get upgrade -y
 apt-get install -y curl wget unzip ca-certificates gnupg lsb-release
 
 #########################################
-# Node-RED
+# 2️⃣ Node-RED
 #########################################
-if [[ $NODE_RED -eq 1 ]]; then
-  echo -e "${INFO} Node-RED telepítése..."
-
+if [[ $INSTALL_NODE_RED -eq 1 ]]; then
+  echo -e "${BLUE}2. Node-RED telepítés${NC}"
   if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
     npm install -g --unsafe-perm node-red
-    echo -e "${CHECK} Node-RED telepítve."
 
-    # systemd service
     SERVICE="/etc/systemd/system/node-red.service"
     if [[ ! -f "$SERVICE" ]]; then
       cat >"$SERVICE" <<'UNIT'
@@ -102,6 +98,7 @@ Type=simple
 User=root
 ExecStart=/usr/bin/env node-red
 Restart=on-failure
+Environment="NODE_OPTIONS=--max_old_space_size=256"
 
 [Install]
 WantedBy=multi-user.target
@@ -109,88 +106,78 @@ UNIT
       systemctl daemon-reload
     fi
 
-    read -rp "Induljon automatikusan bootkor? (y/n): " NR
-    if [[ "$NR" =~ ^[Yy]$ ]]; then
+    read -rp "Induljon a Node-RED automatikusan bootkor? (y/n): " NR_AUTO </dev/tty || NR_AUTO="n"
+    if [[ "$NR_AUTO" =~ ^[Yy]$ ]]; then
       systemctl enable --now node-red
-      echo -e "${CHECK} Node-RED engedélyezve."
-    else
-      echo -e "${INFO} Node-RED nincs autoindításra állítva."
     fi
   else
-    echo -e "${ERR} Node.js vagy npm nem telepített – kihagyva."
+    echo -e "${WARN} Node.js vagy npm nincs telepítve, Node-RED kihagyva."
   fi
 fi
 
 #########################################
-# Apache2 + MariaDB + PHP + phpMyAdmin
+# 3️⃣ Apache2 + MariaDB + PHP + phpMyAdmin
 #########################################
-if [[ $LAMP -eq 1 ]]; then
-  echo -e "${INFO} LAMP csomagok telepítése..."
+if [[ $INSTALL_LAMP -eq 1 ]]; then
+  echo -e "${BLUE}3. Apache2 + MariaDB + PHP + phpMyAdmin telepítés${NC}"
   apt-get install -y apache2 mariadb-server php libapache2-mod-php php-mysql \
     php-mbstring php-zip php-gd php-json php-curl
+  systemctl enable --now apache2 mariadb
 
-  systemctl enable apache2 mariadb
-  systemctl start apache2 mariadb
-  echo -e "${CHECK} Apache2 + MariaDB fut."
-
-  # MariaDB user
-  echo -e "${INFO} MariaDB user létrehozása (user / user123)"
+  # MariaDB user létrehozása
   mysql -u root <<EOF
 CREATE USER IF NOT EXISTS 'user'@'localhost' IDENTIFIED BY 'user123';
 GRANT ALL PRIVILEGES ON *.* TO 'user'@'localhost' WITH GRANT OPTION;
 FLUSH PRIVILEGES;
 EOF
 
-  # phpMyAdmin kézi telepítés
-  echo -e "${INFO} phpMyAdmin telepítése..."
+  # phpMyAdmin telepítés
   cd /tmp
   wget -q -O phpmyadmin.zip https://www.phpmyadmin.net/downloads/phpMyAdmin-latest-all-languages.zip
   unzip -q phpmyadmin.zip
+  rm phpmyadmin.zip
   rm -rf /usr/share/phpmyadmin
   mv phpMyAdmin-*-all-languages /usr/share/phpmyadmin
   mkdir -p /usr/share/phpmyadmin/tmp
+  chown -R www-data:www-data /usr/share/phpmyadmin
   chmod 777 /usr/share/phpmyadmin/tmp
 
-  # Apache alias
+  # Apache config phpMyAdminhoz
   cat >/etc/apache2/conf-available/phpmyadmin.conf <<'APACHECONF'
 Alias /phpmyadmin /usr/share/phpmyadmin
+
 <Directory /usr/share/phpmyadmin>
     Options FollowSymLinks
     DirectoryIndex index.php
+    AllowOverride All
     Require all granted
 </Directory>
 APACHECONF
 
   a2enconf phpmyadmin
   systemctl reload apache2
-  echo -e "${CHECK} phpMyAdmin kész (http://$IP_ADDR/phpmyadmin)"
 fi
 
 #########################################
-# MQTT (Mosquitto)
+# 4️⃣ MQTT (Mosquitto)
 #########################################
-if [[ $MQTT -eq 1 ]]; then
-  echo -e "${INFO} MQTT (Mosquitto) telepítése..."
+if [[ $INSTALL_MQTT -eq 1 ]]; then
+  echo -e "${BLUE}4. MQTT (Mosquitto) telepítés${NC}"
   apt-get install -y mosquitto mosquitto-clients
-
   mkdir -p /etc/mosquitto/conf.d
-  cat >/etc/mosquitto/conf.d/local.conf <<'MQTT'
+  cat >/etc/mosquitto/conf.d/local.conf <<'MQTTCONF'
 listener 1883
 allow_anonymous true
-MQTT
-
-  systemctl enable mosquitto
-  systemctl restart mosquitto
-  echo -e "${CHECK} MQTT fut a 1883 porton."
+MQTTCONF
+  systemctl enable --now mosquitto
 fi
 
 #########################################
-# MC
+# 5️⃣ mc (Midnight Commander)
 #########################################
-if [[ $MC -eq 1 ]]; then
-  echo -e "${INFO} mc telepítése..."
+if [[ $INSTALL_MC -eq 1 ]]; then
+  echo -e "${BLUE}5. mc telepítés${NC}"
   apt-get install -y mc
-  echo -e "${CHECK} mc telepítve (indítás: mc)"
 fi
 
 #########################################
@@ -198,9 +185,4 @@ fi
 #########################################
 echo
 echo -e "${GREEN}Telepítés befejezve.${NC}"
-echo
-[[ $NODE_RED -eq 1 ]] && echo "Node-RED:        http://$IP_ADDR:1880"
-[[ $LAMP -eq 1 ]] && echo "phpMyAdmin:      http://$IP_ADDR/phpmyadmin"
-[[ $MQTT -eq 1 ]] && echo "MQTT broker:     $IP_ADDR:1883"
-[[ $MC -eq 1 ]] && echo "mc parancs:      mc"
 echo
