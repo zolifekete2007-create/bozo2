@@ -11,6 +11,12 @@ INFO="${BLUE}[INFO]${NC}"
 set -e
 export DEBIAN_FRONTEND=noninteractive
 
+echo -e "${BLUE}"
+echo '╔══════════════════════════════════════════╗'
+echo '║     Egyszerű Vincseszter Telepítő        ║'
+echo '╚══════════════════════════════════════════╝'
+echo -e "${NC}"
+
 if [[ $EUID -ne 0 ]]; then
   echo -e "${ERR} Rootként futtasd!"
   exit 1
