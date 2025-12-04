@@ -1,145 +1,206 @@
 #!/usr/bin/env bash
 
+# ====== Színek (egyszerűbb) ======
+RED='\033[1;31m'
+GREEN='\033[1;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[1;34m'
+NC='\033[0m'
+
+CHECK="${GREEN}[OK]${NC}"
+ERR="${RED}[ERR]${NC}"
+INFO="${BLUE}[INFO]${NC}"
+
 set -e
 export DEBIAN_FRONTEND=noninteractive
 
-WHITE='\033[1;37m'
-NC='\033[0m'
-CHECK="${WHITE}[OK]${NC}"
-CROSS="${WHITE}[ERR]${NC}"
+echo -e "${BLUE}"
+echo '╔══════════════════════════════════════════╗'
+echo '║     Egyszerű Vincseszter Telepítő        ║'
+echo '╚══════════════════════════════════════════╝'
+echo -e "${NC}"
 
-# Root ellenőrzés
+# --- Root ellenőrzés ---
 if [[ $EUID -ne 0 ]]; then
-  echo -e "${CROSS} Ezt a scriptet rootként kell futtatni!"
+  echo -e "${ERR} Rootként futtasd!"
   exit 1
 fi
 
-IP_ADDR=$(hostname -I | awk '{print $1}')
+# IP cím
+IP_ADDR=$(hostname -I 2>/dev/null | awk '{print $1}')
 [ -z "$IP_ADDR" ] && IP_ADDR="szerver-ip"
 
-INSTALL_NODE_RED=0
-INSTALL_LAMP=0
-INSTALL_MQTT=0
-INSTALL_MC=0
+#########################################
+# MENÜ
+#########################################
 
-echo -e "${WHITE}Mit szeretnél telepíteni?${NC}"
-echo " 0 - Mindent"
-echo " 1 - Node-RED"
-echo " 2 - Apache + MariaDB + phpMyAdmin"
-echo " 3 - MQTT (Mosquitto)"
-echo " 4 - mc"
+echo -e "${YELLOW}Mit szeretnél telepíteni?${NC}"
+echo -e "  1 - Node-RED"
+echo -e "  2 - Apache2 + MariaDB + PHP + phpMyAdmin"
+echo -e "  3 - MQTT (Mosquitto)"
+echo -e "  4 - mc (Midnight Commander)"
+echo -e "  5 - MINDENT telepít"
 echo
+read -rp "Választás (pl. 1 vagy 1 2 3): " CHOICES
 
-read -rp "Opciók: " CHOICES </dev/tty
+# Flags
+NODE_RED=0
+LAMP=0
+MQTT=0
+MC=0
 
-if echo "$CHOICES" | grep -qw 0; then
-  INSTALL_NODE_RED=1
-  INSTALL_LAMP=1
-  INSTALL_MQTT=1
-  INSTALL_MC=1
+if echo "$CHOICES" | grep -qw "5"; then
+  NODE_RED=1
+  LAMP=1
+  MQTT=1
+  MC=1
 fi
 
 for c in $CHOICES; do
   case "$c" in
-    1) INSTALL_NODE_RED=1;;
-    2) INSTALL_LAMP=1;;
-    3) INSTALL_MQTT=1;;
-    4) INSTALL_MC=1;;
+    1) NODE_RED=1 ;;
+    2) LAMP=1 ;;
+    3) MQTT=1 ;;
+    4) MC=1 ;;
+    5) ;; # már kezeltük
+    *) echo -e "${YELLOW}[!] Ismeretlen opció: $c${NC}" ;;
   esac
 done
 
-echo "Frissítés..."
-apt-get update -y
-apt-get upgrade -y
-echo -e "$CHECK Frissítve."
+if [[ $NODE_RED -eq 0 && $LAMP -eq 0 && $MQTT -eq 0 && $MC -eq 0 ]]; then
+  echo -e "${ERR} Nem választottál semmit."
+  exit 0
+fi
 
-echo "Alap csomagok telepítése..."
-apt-get install -y curl wget unzip ca-certificates
-echo -e "$CHECK Telepítve."
+#########################################
+# APT update
+#########################################
+echo -e "${INFO} Rendszer frissítése..."
+apt-get update -y && apt-get upgrade -y
+apt-get install -y curl wget unzip ca-certificates gnupg lsb-release
 
+#########################################
 # Node-RED
-if [[ $INSTALL_NODE_RED -eq 1 ]]; then
-  echo "Node-RED telepítése..."
-  if command -v node >/dev/null && command -v npm >/dev/null; then
-    npm install -g --unsafe-perm node-red
+#########################################
+if [[ $NODE_RED -eq 1 ]]; then
+  echo -e "${INFO} Node-RED telepítése..."
 
-    cat >/etc/systemd/system/node-red.service <<EOF
+  if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
+    npm install -g --unsafe-perm node-red
+    echo -e "${CHECK} Node-RED telepítve."
+
+    # systemd service
+    SERVICE="/etc/systemd/system/node-red.service"
+    if [[ ! -f "$SERVICE" ]]; then
+      cat >"$SERVICE" <<'UNIT'
 [Unit]
 Description=Node-RED
 After=network.target
+
 [Service]
 Type=simple
 User=root
 ExecStart=/usr/bin/env node-red
 Restart=on-failure
+
 [Install]
 WantedBy=multi-user.target
-EOF
+UNIT
+      systemctl daemon-reload
+    fi
 
-    systemctl daemon-reload
-    systemctl enable --now node-red
-    echo -e "$CHECK Node-RED kész."
+    read -rp "Induljon automatikusan bootkor? (y/n): " NR
+    if [[ "$NR" =~ ^[Yy]$ ]]; then
+      systemctl enable --now node-red
+      echo -e "${CHECK} Node-RED engedélyezve."
+    else
+      echo -e "${INFO} Node-RED nincs autoindításra állítva."
+    fi
   else
-    echo "Node.js és npm nem található — Node-RED kihagyva."
+    echo -e "${ERR} Node.js vagy npm nem telepített – kihagyva."
   fi
 fi
 
-# Apache + MariaDB + phpMyAdmin
-if [[ $INSTALL_LAMP -eq 1 ]]; then
-  echo "LAMP telepítése..."
-  apt-get install -y apache2 mariadb-server php libapache2-mod-php php-mysql php-mbstring php-zip php-json php-curl
+#########################################
+# Apache2 + MariaDB + PHP + phpMyAdmin
+#########################################
+if [[ $LAMP -eq 1 ]]; then
+  echo -e "${INFO} LAMP csomagok telepítése..."
+  apt-get install -y apache2 mariadb-server php libapache2-mod-php php-mysql \
+    php-mbstring php-zip php-gd php-json php-curl
 
   systemctl enable apache2 mariadb
   systemctl start apache2 mariadb
+  echo -e "${CHECK} Apache2 + MariaDB fut."
 
+  # MariaDB user
+  echo -e "${INFO} MariaDB user létrehozása (user / user123)"
   mysql -u root <<EOF
 CREATE USER IF NOT EXISTS 'user'@'localhost' IDENTIFIED BY 'user123';
-GRANT ALL PRIVILEGES ON *.* TO 'user'@'localhost';
+GRANT ALL PRIVILEGES ON *.* TO 'user'@'localhost' WITH GRANT OPTION;
 FLUSH PRIVILEGES;
 EOF
 
-  echo "phpMyAdmin telepítése..."
+  # phpMyAdmin kézi telepítés
+  echo -e "${INFO} phpMyAdmin telepítése..."
   cd /tmp
-  wget -q -O pma.zip https://www.phpmyadmin.net/downloads/phpMyAdmin-latest-all-languages.zip
-  unzip -q pma.zip
+  wget -q -O phpmyadmin.zip https://www.phpmyadmin.net/downloads/phpMyAdmin-latest-all-languages.zip
+  unzip -q phpmyadmin.zip
   rm -rf /usr/share/phpmyadmin
-  mv phpMyAdmin-* /usr/share/phpmyadmin
+  mv phpMyAdmin-*-all-languages /usr/share/phpmyadmin
+  mkdir -p /usr/share/phpmyadmin/tmp
+  chmod 777 /usr/share/phpmyadmin/tmp
 
-  cat >/etc/apache2/conf-available/phpmyadmin.conf <<EOF
+  # Apache alias
+  cat >/etc/apache2/conf-available/phpmyadmin.conf <<'APACHECONF'
 Alias /phpmyadmin /usr/share/phpmyadmin
 <Directory /usr/share/phpmyadmin>
-  Require all granted
+    Options FollowSymLinks
+    DirectoryIndex index.php
+    Require all granted
 </Directory>
-EOF
+APACHECONF
 
   a2enconf phpmyadmin
   systemctl reload apache2
-
-  echo -e "$CHECK LAMP kész."
+  echo -e "${CHECK} phpMyAdmin kész (http://$IP_ADDR/phpmyadmin)"
 fi
 
-# MQTT
-if [[ $INSTALL_MQTT -eq 1 ]]; then
-  echo "Mosquitto telepítése..."
+#########################################
+# MQTT (Mosquitto)
+#########################################
+if [[ $MQTT -eq 1 ]]; then
+  echo -e "${INFO} MQTT (Mosquitto) telepítése..."
   apt-get install -y mosquitto mosquitto-clients
-  systemctl enable --now mosquitto
-  echo -e "$CHECK MQTT kész."
+
+  mkdir -p /etc/mosquitto/conf.d
+  cat >/etc/mosquitto/conf.d/local.conf <<'MQTT'
+listener 1883
+allow_anonymous true
+MQTT
+
+  systemctl enable mosquitto
+  systemctl restart mosquitto
+  echo -e "${CHECK} MQTT fut a 1883 porton."
 fi
 
-# mc
-if [[ $INSTALL_MC -eq 1 ]]; then
-  echo "mc telepítése..."
+#########################################
+# MC
+#########################################
+if [[ $MC -eq 1 ]]; then
+  echo -e "${INFO} mc telepítése..."
   apt-get install -y mc
-  echo -e "$CHECK mc kész."
+  echo -e "${CHECK} mc telepítve (indítás: mc)"
 fi
 
+#########################################
+# Összegzés – egyszerű
+#########################################
 echo
-echo -e "${WHITE}Telepítés kész.${NC}"
+echo -e "${GREEN}Telepítés befejezve.${NC}"
 echo
-
-[[ $INSTALL_NODE_RED -eq 1 ]] && echo "Node-RED:      http://$IP_ADDR:1880"
-[[ $INSTALL_LAMP -eq 1     ]] && echo "phpMyAdmin:    http://$IP_ADDR/phpmyadmin"
-[[ $INSTALL_MQTT -eq 1     ]] && echo "MQTT:          $IP_ADDR:1883"
-[[ $INSTALL_MC -eq 1       ]] && echo "mc:            parancs: mc"
-
+[[ $NODE_RED -eq 1 ]] && echo "Node-RED:        http://$IP_ADDR:1880"
+[[ $LAMP -eq 1 ]] && echo "phpMyAdmin:      http://$IP_ADDR/phpmyadmin"
+[[ $MQTT -eq 1 ]] && echo "MQTT broker:     $IP_ADDR:1883"
+[[ $MC -eq 1 ]] && echo "mc parancs:      mc"
 echo
