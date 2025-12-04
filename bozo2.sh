@@ -4,9 +4,7 @@ set -e
 export DEBIAN_FRONTEND=noninteractive
 
 WHITE='\033[1;37m'
-GRAY='\033[0;37m'
 NC='\033[0m'
-
 CHECK="${WHITE}[OK]${NC}"
 CROSS="${WHITE}[ERR]${NC}"
 
@@ -16,15 +14,9 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
-# Log
-TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-LOGFILE="/var/log/vincseszter-$TIMESTAMP.log"
-exec > >(tee -a "$LOGFILE") 2>&1
-
 IP_ADDR=$(hostname -I | awk '{print $1}')
 [ -z "$IP_ADDR" ] && IP_ADDR="szerver-ip"
 
-# Menü
 INSTALL_NODE_RED=0
 INSTALL_LAMP=0
 INSTALL_MQTT=0
@@ -56,7 +48,7 @@ for c in $CHOICES; do
   esac
 done
 
-echo "Rendszer frissítése..."
+echo "Frissítés..."
 apt-get update -y
 apt-get upgrade -y
 echo -e "$CHECK Frissítve."
@@ -92,9 +84,9 @@ EOF
   fi
 fi
 
-# LAMP
+# Apache + MariaDB + phpMyAdmin
 if [[ $INSTALL_LAMP -eq 1 ]]; then
-  echo "Apache + MariaDB + PHP telepítése..."
+  echo "LAMP telepítése..."
   apt-get install -y apache2 mariadb-server php libapache2-mod-php php-mysql php-mbstring php-zip php-json php-curl
 
   systemctl enable apache2 mariadb
@@ -123,7 +115,7 @@ EOF
   a2enconf phpmyadmin
   systemctl reload apache2
 
-  echo -e "$CHECK LAMP környezet kész."
+  echo -e "$CHECK LAMP kész."
 fi
 
 # MQTT
@@ -141,10 +133,8 @@ if [[ $INSTALL_MC -eq 1 ]]; then
   echo -e "$CHECK mc kész."
 fi
 
-# Összegzés
 echo
 echo -e "${WHITE}Telepítés kész.${NC}"
-echo "Log: $LOGFILE"
 echo
 
 [[ $INSTALL_NODE_RED -eq 1 ]] && echo "Node-RED:      http://$IP_ADDR:1880"
