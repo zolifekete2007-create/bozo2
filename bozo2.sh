@@ -16,6 +16,9 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
+IP_ADDR=$(hostname -I 2>/dev/null | awk '{print $1}')
+[ -z "$IP_ADDR" ] && IP_ADDR="szerver-ip"
+
 echo -e "${YELLOW}Mit szeretnél telepíteni?${NC}"
 echo -e "  1 - Node-RED"
 echo -e "  2 - Apache2 + MariaDB + PHP + phpMyAdmin"
@@ -62,6 +65,7 @@ if [[ $NODE_RED -eq 1 ]]; then
   if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
     npm install -g --unsafe-perm node-red
     echo -e "${CHECK} Node-RED telepítve."
+
     SERVICE="/etc/systemd/system/node-red.service"
     if [[ ! -f "$SERVICE" ]]; then
       cat >"$SERVICE" <<'UNIT'
@@ -78,10 +82,13 @@ WantedBy=multi-user.target
 UNIT
       systemctl daemon-reload
     fi
+
     read -rp "Induljon automatikusan bootkor? (y/n): " NR
     if [[ "$NR" =~ ^[Yy]$ ]]; then
       systemctl enable --now node-red
       echo -e "${CHECK} Node-RED engedélyezve."
+    else
+      echo -e "${INFO} Node-RED nincs autoindításra állítva."
     fi
   else
     echo -e "${ERR} Node.js vagy npm nem telepített – kihagyva."
@@ -146,4 +153,9 @@ fi
 
 echo
 echo -e "${GREEN}Telepítés befejezve.${NC}"
+echo
+[[ $NODE_RED -eq 1 ]] && echo "Node-RED:        http://$IP_ADDR:1880"
+[[ $LAMP -eq 1 ]] && echo "phpMyAdmin:      http://$IP_ADDR/phpmyadmin"
+[[ $MQTT -eq 1 ]] && echo "MQTT broker:     $IP_ADDR:1883"
+[[ $MC -eq 1 ]] && echo "mc parancs:      mc"
 echo
